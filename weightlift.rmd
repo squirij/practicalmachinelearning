@@ -1,0 +1,154 @@
+---
+title: "Practical Machine Learning Project"
+author: "squirij"
+date: "October 25, 2015"
+output: html_document
+---
+
+###Project Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+###Goal
+
+The goal in this project is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants and predict the manner in which they did the exercise. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The report below outlines steps taken in model development, cross validation, and the expected out of sample error.
+
+###Data
+
+Six young health participants (aged between 20-28 years, with little weight lifting experience) were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl using a relatively light dumbell (1.25 kg) in five different fashions:  
+  
+* Class A - Exactly according to the specification  
+* Class B - Throwing the elbows to the front  
+* Class C - Lifting the dumbbell only halfway  
+* Class D - Lowering the dumbbell only halfway  
+* Class E - Throwing the hips to the front  
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+<u>Datasets </u>
+
+**Training data 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+**Testing data 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+###Getting and Cleaning Data
+This first set of code downloads the data and loads the functions needed for analysis.  Also, a "seed" will be programmed to allow for reproducibility of the results.
+
+```{r libs, echo=TRUE, results="hide", warning=FALSE}  
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(e1071)
+library(randomForest)
+
+set.seed(235)
+
+``` 
+
+Next, load the data
+
+```{r dta, echo=TRUE, results='hide', warning=FALSE}  
+
+# Download data.
+trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+trainfile <- "pml-training(1).csv"
+download.file(url=trainurl, destfile=trainfile, method="curl")
+testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testfile <- "pml-testing(1).csv"
+download.file(url=testurl, destfile=testfile, method="curl")
+
+# Import the data treating empty values as NA.
+trainfile2 <- read.csv(trainfile, na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(trainfile2)
+testfile2 <- read.csv(testfile, na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(testfile2)
+
+# Verify that the column names match in the training and test sets
+
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+
+```
+
+Clean the data by removing the first seven columns that contain demographic information regarding the participant that is not needed for modeling and all the columns that contain NAs only.  In addition, check for variables with no zero variance.  These variables will not have an effect on the modeling and are unnecessary.
+
+```{r dta2, echo=TRUE, results='hide', warning=FALSE}  
+
+#remove first 7 columns demographic data not needed for modeling
+trainfile3 <- trainfile2[,8:length(colnames(trainfile2))]
+testfile3 <- testfile2[,8:length(colnames(testfile2))]
+
+#remove columns with all NAs
+trainfile3 <- trainfile3[,colSums(is.na(trainfile3))==0]
+testfile3 <- testfile3[,colSums(is.na(testfile3))==0]
+
+#check for variables that have No Zero Variance (low variance low effect on model) #and remove them from data if applic
+nzv <- nearZeroVar(trainfile3,saveMetrics=TRUE)
+sumnzv <-sum(nzv$nzv)
+
+if (sumnzv>0) { 
+        trainfile3 <- trainfile3[,nzv$nzv==FALSE]
+}
+
+```
+
+###Model Development  
+
+To begin the model development the training data set above must be split into a training and a testing (or validation) dataset.  70% of the data will be used to train the model with the remaining 30% to be used to verify the model performance.
+
+```{r split, echo=TRUE, results='hide', warning=FALSE} 
+modtrain <- createDataPartition(trainfile3$classe, p=0.70, list=F)
+inTrain <- trainfile3[modtrain,]
+inTest <- trainfile3[-modtrain,]
+```
+
+###Train the model and do cross validation  
+
+Next, the Training dataset (inTrain) is used to train the model.  The Random Forest method has been chosed to fit the model.  Random Forest is the best method to use due to the accuracy of its output - it selects the most important variables and correlated covariates to best reduce variance and predict bias and interpretability.  A 5-fold cross validation is also done to partition the training data into 5 separate subsets where one subset is used as validation and the other 4 to be used as training sets.  Results from the 5 fold cross validation are then averaged.
+```{r train, echo=TRUE, warning=FALSE}
+cvs <- trainControl(method="cv", number=5)
+trainmodel <- train(classe ~ ., data=inTrain, method="rf",
+                 trControl=cvs)
+trainmodel
+```
+
+###Estimate model performance  
+
+The model fit from the training data is then tested against the test data. The accuracy and overall out-of-sample error will be determined to how well the model will perform with other data.
+
+```{r test, echo=TRUE, warning=FALSE}
+predict <- predict(trainmodel, inTest)
+confusionMatrix(inTest$classe, predict)
+
+#code to get accuracy and outofsample erro
+
+accuracy <- postResample(predict, inTest$classe)
+acc.out <- accuracy[1]
+
+overall.ose <- 1-acc.out
+    
+```
+
+Results = accuracy = **`r acc.out`**; overall out-of-sample error = **`r overall.ose`**
+
+###Run Model against Test data  
+
+```{r testpredict, echo=TRUE, warning=FALSE}
+predicttest <- predict(trainmodel, testfile3[, -length(names(testfile3))])
+predicttest  
+```
+
+###Decision Tree Visualization  
+
+```{r tree, echo=TRUE, warning=FALSE}
+classtree <- rpart(classe ~ ., data=inTrain, method="class")
+fancyRpartPlot(classtree)
+```
+ 
+ 
